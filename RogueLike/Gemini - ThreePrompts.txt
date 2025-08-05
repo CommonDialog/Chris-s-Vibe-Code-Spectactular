@@ -1,0 +1,11 @@
+I want to create an ASCII-based rogue like when you pilot a mecha through a dungeon delve. Programmatically create each level starting with a 15 by 10 map and then get bigger each level up to 20 levels. Your pilot should have stats and your mecha should have weapons and armor and sensors and movement that can be upgraded. The game is played by using the arrow keys. Enemies are placed on the map at random and spawn at random. Every 5th level there is a boss you have to defeat before you can go on. Characters should be saved to local storage for later retrieval. There are items that can be dropped of upgrades and healing.
+
+>>> Produced gemini-roguelike.html
+
+What are the d characters? Also, please implement combat. In combat, either side can run away. If they fail to run away, the other side gets to attack. Also, add treasure chests.
+
+>>> Produced gemini-roguelike1.html
+
+Level 1 enemies do too much damage and I should be given the opportunity to run away my moving away. It should not happen automatically
+
+>>> Produced gemini-roguelike2.html

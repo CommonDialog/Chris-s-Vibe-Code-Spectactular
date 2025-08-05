@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mecha Roguelike</title>
+    <style>
+        body { background-color: #111; color: #eee; font-family: 'Courier New', Courier, monospace; text-align: center; }
+        #game-container { line-height: 1; font-size: 20px; display: inline-block; border: 2px solid #555; padding: 10px; }
+        #ui-panel { margin-top: 15px; font-size: 16px; text-align: left; display: inline-block; vertical-align: top; margin-left: 20px; width: 250px;}
+        .player { color: #4f4; font-weight: bold; }
+        .enemy { color: #f44; font-weight: bold; }
+        .wall { color: #888; }
+        .floor { color: #444; }
+        .stairs { color: #ff0; }
+        .chest { color: #f90; }
+        .dead { color: #500; font-weight: bold;}
+    </style>
+</head>
+<body>
+    <h1>Mecha Roguelike</h1>
+    <div>
+        <pre id="game-container"></pre>
+        <div id="ui-panel">
+            <h3 style="margin-top: 0;">-- MECHA STATUS --</h3>
+            <div>Level: <span id="ui-level">1</span></div>
+            <div>Position: <span id="ui-pos">0, 0</span></div>
+            <div>Hull: <span id="ui-hull">100/100</span></div>
+            <br/>
+            <h3 style="margin-top: 0;">-- PILOT STATS --</h3>
+            <div>Gunnery: <span id="ui-gun">5</span></div>
+            <div>Piloting: <span id="ui-pil">5</span></div>
+            <br/>
+            <h3 style="margin-top: 0;">-- EVENT LOG --</h3>
+            <div id="message-log" style="color: #f90; height: 100px; overflow-y: auto; display: flex; flex-direction: column-reverse;"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- CORE GAME OBJECTS ---
+
+        const TILES = {
+            WALL: { char: '#', color: 'wall', solid: true },
+            FLOOR: { char: '.', color: 'floor', solid: false },
+            STAIRS: { char: '>', color: 'stairs', solid: false },
+            CHEST: { char: '~', color: 'chest', solid: true } // Chests are solid until opened
+        };
+
+        class Entity {
+            constructor(x, y, char, color, name, stats) {
+                this.x = x;
+                this.y = y;
+                this.char = char;
+                this.color = color;
+                this.name = name;
+                this.stats = stats;
+            }
+
+            // NEW: Method for taking damage
+            takeDamage(amount, attackerName) {
+                this.stats.hull -= amount;
+                if (this.stats.hull <= 0) {
+                    this.stats.hull = 0;
+                    Game.logMessage(`${attackerName} destroys the ${this.name}!`);
+                    this.die();
+                } else {
+                    Game.logMessage(`${attackerName} hits the ${this.name} for ${amount} damage.`);
+                }
+            }
+
+            // NEW: Attack method
+            attack(target) {
+                const damage = Math.floor(Math.random() * (this.stats.maxDamage - this.stats.minDamage + 1)) + this.stats.minDamage;
+                Game.logMessage(`${this.name} attacks ${target.name}.`);
+                target.takeDamage(damage, this.name);
+            }
+
+            die() {
+                this.char = '%'; // Wreckage symbol
+                this.color = 'dead';
+                // In a real game, you'd remove this entity from the enemy list
+            }
+        }
+
+        class Player extends Entity {
+            constructor(x, y) {
+                super(x, y, '@', 'player', 'Player', {
+                    hull: 100,
+                    maxHull: 100,
+                    gunnery: 5, // Affects hit chance (not implemented yet)
+                    piloting: 5, // Affects flee chance
+                    minDamage: 8,
+                    maxDamage: 15
+                });
+            }
+
+             die() {
+                super.die();
+                Game.logMessage("Your mecha has been destroyed. GAME OVER.");
+                Game.endGame();
+            }
+        }
+
+        class Enemy extends Entity {
+             constructor(x, y) {
+                super(x, y, 'd', 'enemy', 'Scout Drone', {
+                    hull: 30,
+                    maxHull: 30,
+                    piloting: 3,
+                    minDamage: 5,
+                    maxDamage: 10
+                });
+            }
+
+            // NEW: Enemy AI logic
+            act() {
+                if(this.stats.hull <= 0) return; // Dead enemies don't act
+
+                const dx = Game.player.x - this.x;
+                const dy = Game.player.y - this.y;
+
+                // If adjacent to player, attack
+                if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) {
+                    this.attack(Game.player);
+                    return;
+                }
+
+                // Otherwise, move towards player
+                let newX = this.x;
+                let newY = this.y;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    newX += Math.sign(dx);
+                } else {
+                    newY += Math.sign(dy);
+                }
+                
+                // Move if the space is not solid and not occupied
+                if (!Game.isOccupied(newX, newY)) {
+                    this.x = newX;
+                    this.y = newY;
+                }
+            }
+        }
+
+        // --- GAME ENGINE ---
+
+        const Game = {
+            display: null,
+            ui: {},
+            map: {},
+            player: null,
+            enemies: [],
+            chests: [], // NEW: Array for chests
+            level: 1,
+            playerTurn: true,
+
+            init: function() {
+                this.display = document.getElementById('game-container');
+                // Setup UI elements
+                this.ui.level = document.getElementById('ui-level');
+                this.ui.pos = document.getElementById('ui-pos');
+                this.ui.hull = document.getElementById('ui-hull');
+                this.ui.gun = document.getElementById('ui-gun');
+                this.ui.pil = document.getElementById('ui-pil');
+                this.ui.log = document.getElementById('message-log');
+                
+                this.generateLevel();
+                this.inputHandler = this.handleInput.bind(this); // Store bound function
+                window.addEventListener('keydown', this.inputHandler);
+                this.logMessage("Welcome, Pilot. Systems online.");
+                this.draw();
+            },
+            
+            endGame: function() {
+                window.removeEventListener('keydown', this.inputHandler);
+            },
+
+            generateLevel: function() {
+                const width = 15 + Math.floor(this.level * 1.5);
+                const height = 10 + this.level;
+                this.map = { width: width, height: height, tiles: {} };
+                
+                // 1. Create map of walls
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        this.map.tiles[`${x},${y}`] = TILES.WALL;
+                    }
+                }
+
+                const floorTiles = [];
+                let currentX = Math.floor(width / 2);
+                let currentY = Math.floor(height / 2);
+                const totalTiles = width * height;
+                const desiredFloors = totalTiles * 0.45;
+                
+                while (floorTiles.length < desiredFloors) {
+                    if (this.map.tiles[`${currentX},${currentY}`].solid) {
+                        this.map.tiles[`${currentX},${currentY}`] = TILES.FLOOR;
+                        floorTiles.push({x: currentX, y: currentY});
+                    }
+                    const direction = Math.floor(Math.random() * 4);
+                    if (direction === 0 && currentX > 1) currentX--;
+                    else if (direction === 1 && currentX < width - 2) currentX++;
+                    else if (direction === 2 && currentY > 1) currentY--;
+                    else if (direction === 3 && currentY < height - 2) currentY++;
+                }
+
+                // Place player, stairs, enemies, and chests
+                const playerStart = floorTiles.shift();
+                if (!this.player) {
+                    this.player = new Player(playerStart.x, playerStart.y);
+                } else {
+                    this.player.x = playerStart.x;
+                    this.player.y = playerStart.y;
+                }
+
+                const stairsPos = floorTiles.pop();
+                this.map.tiles[`${stairsPos.x},${stairsPos.y}`] = TILES.STAIRS;
+                
+                this.enemies = [];
+                const numEnemies = 2 + this.level;
+                for(let i=0; i < numEnemies && floorTiles.length > 0; i++) {
+                    const pos = floorTiles.splice(Math.floor(Math.random() * floorTiles.length), 1)[0];
+                    this.enemies.push(new Enemy(pos.x, pos.y));
+                }
+                
+                // NEW: Place chests
+                this.chests = [];
+                const numChests = 1 + Math.floor(Math.random() * 3);
+                 for(let i=0; i < numChests && floorTiles.length > 0; i++) {
+                    const pos = floorTiles.splice(Math.floor(Math.random() * floorTiles.length), 1)[0];
+                    this.map.tiles[`${pos.x},${pos.y}`] = TILES.CHEST;
+                    this.chests.push({x: pos.x, y: pos.y}); // Track chest locations
+                }
+            },
+            
+            logMessage: function(message) {
+                // Prepend new messages to the log
+                const messageElement = document.createElement('div');
+                messageElement.textContent = `> ${message}`;
+                this.ui.log.prepend(messageElement);
+            },
+            
+            // NEW: Helper to check if a tile is occupied by a living enemy or player
+            isOccupied: function(x, y) {
+                if (this.player.x === x && this.player.y === y) return true;
+                for (const enemy of this.enemies) {
+                    if (enemy.x === x && enemy.y === y && enemy.stats.hull > 0) return enemy;
+                }
+                return false;
+            },
+
+            draw: function() {
+                let mapString = '';
+                const { width, height, tiles } = this.map;
+
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        // Drawing priority: Player > Living Enemies > Dead Enemies > Map Tiles
+                        if (this.player.x === x && this.player.y === y) {
+                            mapString += `<span class="${this.player.color}">${this.player.char}</span>`;
+                        } else {
+                            const entity = this.isOccupied(x, y);
+                            if (entity) {
+                                mapString += `<span class="${entity.color}">${entity.char}</span>`;
+                            } else {
+                                // Draw dead bodies
+                                const deadEnemy = this.enemies.find(e => e.x === x && e.y === y && e.stats.hull <= 0);
+                                if (deadEnemy) {
+                                    mapString += `<span class="${deadEnemy.color}">${deadEnemy.char}</span>`;
+                                } else {
+                                    const tile = tiles[`${x},${y}`];
+                                    mapString += `<span class="${tile.color}">${tile.char}</span>`;
+                                }
+                            }
+                        }
+                    }
+                    mapString += '\n';
+                }
+                this.display.innerHTML = mapString;
+                
+                // Update UI Panel
+                const p = this.player;
+                this.ui.level.textContent = this.level;
+                this.ui.pos.textContent = `${p.x}, ${p.y}`;
+                this.ui.hull.textContent = `${p.stats.hull}/${p.stats.maxHull}`;
+                this.ui.gun.textContent = p.stats.gunnery;
+                this.ui.pil.textContent = p.stats.piloting;
+            },
+
+            handleInput: function(event) {
+                if (!this.playerTurn) return; // Don't accept input if it's not the player's turn
+
+                let newX = this.player.x;
+                let newY = this.player.y;
+                let moved = false;
+                
+                if (event.key === 'ArrowUp') { newY--; moved = true; }
+                if (event.key === 'ArrowDown') { newY++; moved = true; }
+                if (event.key === 'ArrowLeft') { newX--; moved = true; }
+                if (event.key === 'ArrowRight') { newX++; moved = true; }
+
+                if (moved) {
+                    this.playerTurn = false; // Player takes their turn
+                    const targetTile = this.map.tiles[`${newX},${newY}`];
+                    
+                    // Check for enemy at target location (BUMP-TO-ATTACK)
+                    const targetEnemy = this.isOccupied(newX, newY);
+                    if (targetEnemy) {
+                        this.player.attack(targetEnemy);
+                    } 
+                    // Check for solid wall
+                    else if (targetTile.solid) {
+                        // Is it a chest?
+                        if (targetTile === TILES.CHEST) {
+                            this.logMessage("You pry open a supply chest.");
+                            const healing = 25;
+                            this.player.stats.hull = Math.min(this.player.stats.maxHull, this.player.stats.hull + healing);
+                            this.logMessage(`Hull repaired by ${healing} points!`);
+                            this.map.tiles[`${newX},${newY}`] = TILES.FLOOR; // Chest becomes floor
+                        } else {
+                            this.logMessage("CLANG! You hit a wall.");
+                        }
+                    }
+                    // It's a valid, empty tile to move to
+                    else {
+                        // FLEE MECHANIC CHECK
+                        let adjacentEnemy = null;
+                        for (const enemy of this.enemies) {
+                            if (enemy.stats.hull > 0 && Math.abs(enemy.x - this.player.x) <= 1 && Math.abs(enemy.y - this.player.y) <= 1) {
+                                adjacentEnemy = enemy;
+                                break;
+                            }
+                        }
+
+                        if (adjacentEnemy) {
+                            const fleeChance = 50 + this.player.stats.piloting - adjacentEnemy.stats.piloting;
+                            if (Math.random() * 100 < fleeChance) {
+                                this.logMessage("You successfully evaded!");
+                                this.player.x = newX;
+                                this.player.y = newY;
+                            } else {
+                                this.logMessage("You failed to evade! The enemy gets a free hit!");
+                                adjacentEnemy.attack(this.player);
+                            }
+                        } else {
+                            // Normal move
+                            this.player.x = newX;
+                            this.player.y = newY;
+                        }
+
+                        // Check for stairs after moving
+                        if (this.map.tiles[`${this.player.x},${this.player.y}`] === TILES.STAIRS) {
+                            this.level++;
+                            this.logMessage(`Descending to level ${this.level}...`);
+                            this.generateLevel();
+                        }
+                    }
+
+                    // Enemy turn
+                    setTimeout(() => {
+                        if (this.player.stats.hull > 0) { // Only if player is alive
+                           this.enemies.forEach(e => e.act());
+                        }
+                        this.draw();
+                        this.playerTurn = true; // Give control back to player
+                    }, 100); // 100ms delay for game feel
+                }
+            }
+        };
+
+        // --- START THE GAME ---
+        Game.init();
+    </script>
+</body>
+</html>

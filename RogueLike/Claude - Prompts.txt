@@ -1,0 +1,19 @@
+I want to create an ASCII-based rogue like when you pilot a mecha through a dungeon delve. Programmatically create each level starting with a 15 by 10 map and then get bigger each level up to 20 levels. 
+
+Enemies units include:
+1. dronesmain battle units and assualt units) start easy and get progressively more difficult.  Your pilot should have stats and your mecha should have weapons and armor and sensors and movement that can be upgraded. The game is played by using the arrow keys. Enemies are placed on the map at random and spawn at random.  Bumping into an enemy attacks it.  Moving away attempts to disengage.  Every 5th level there is a boss you have to defeat before you can go on. Characters should be saved to local storage for later retrieval. There are items that can be dropped of upgrades and healing.
+
+
+
+This is great!!  Can you color code the stairs yellow, make all upgrades and repairs just the + sign so that it's a surprise what the bonus is.  Also, make the enemies a red e until they are encountered then they become a d, B, or A.  The boss is always marked.
+
+
+What do fuel cells do?
+
+
+Can you add a fuel gauge.  Also, attacking should not deplete fuel
+
+
+A maze was generated and the exit is blocked.  Also, going down to the next level should add 20 fuel.  Green should be 40 fuel and above.  Also, sensor range should affect whether enemies and bonuses are hidden.  If an enemy or upgrade is in sensor range, it should reveal what type of upgrade or enemy it is.  Sensor range should start at 1
+
+>>> Produced claude-roguelike.html

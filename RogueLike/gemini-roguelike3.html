@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mecha Roguelike</title>
+    <style>
+        body { background-color: #111; color: #eee; font-family: 'Courier New', Courier, monospace; text-align: center; }
+        #game-container { line-height: 1; font-size: 20px; display: inline-block; border: 2px solid #555; padding: 10px; }
+        #ui-panel { margin-top: 15px; font-size: 16px; text-align: left; display: inline-block; vertical-align: top; margin-left: 20px; width: 250px;}
+        .player { color: #4f4; font-weight: bold; }
+        .enemy { color: #f44; font-weight: bold; }
+        .wall { color: #888; }
+        .floor { color: #444; }
+        .stairs { color: #ff0; }
+        .chest { color: #f90; }
+        .dead { color: #500; font-weight: bold;}
+    </style>
+</head>
+<body>
+    <h1>Mecha Roguelike</h1>
+    <div>
+        <pre id="game-container"></pre>
+        <div id="ui-panel">
+            <h3 style="margin-top: 0;">-- MECHA STATUS --</h3>
+            <div>Level: <span id="ui-level">1</span></div>
+            <div>Position: <span id="ui-pos">0, 0</span></div>
+            <div>Hull: <span id="ui-hull">100/100</span></div>
+            <br/>
+            <h3 style="margin-top: 0;">-- PILOT STATS --</h3>
+            <div>Gunnery: <span id="ui-gun">5</span></div>
+            <div>Piloting: <span id="ui-pil">5</span></div>
+            <br/>
+            <h3 style="margin-top: 0;">-- EVENT LOG --</h3>
+            <div id="message-log" style="color: #f90; height: 100px; overflow-y: auto; display: flex; flex-direction: column-reverse;"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- CORE GAME OBJECTS ---
+
+        const TILES = {
+            WALL: { char: '#', color: 'wall', solid: true },
+            FLOOR: { char: '.', color: 'floor', solid: false },
+            STAIRS: { char: '>', color: 'stairs', solid: false },
+            CHEST: { char: '~', color: 'chest', solid: true }
+        };
+
+        class Entity {
+            constructor(x, y, char, color, name, stats) {
+                this.x = x;
+                this.y = y;
+                this.char = char;
+                this.color = color;
+                this.name = name;
+                this.stats = stats;
+            }
+
+            takeDamage(amount, attackerName) {
+                this.stats.hull -= amount;
+                if (this.stats.hull <= 0) {
+                    this.stats.hull = 0;
+                    Game.logMessage(`${attackerName} destroys the ${this.name}!`);
+                    this.die();
+                } else {
+                    Game.logMessage(`${attackerName} hits the ${this.name} for ${amount} damage.`);
+                }
+            }
+
+            attack(target) {
+                const damage = Math.floor(Math.random() * (this.stats.maxDamage - this.stats.minDamage + 1)) + this.stats.minDamage;
+                Game.logMessage(`${this.name} attacks ${target.name}.`);
+                target.takeDamage(damage, this.name);
+            }
+
+            die() {
+                this.char = '%';
+                this.color = 'dead';
+            }
+        }
+
+        class Player extends Entity {
+            constructor(x, y) {
+                super(x, y, '@', 'player', 'Player', {
+                    hull: 100,
+                    maxHull: 100,
+                    gunnery: 5,
+                    piloting: 5,
+                    minDamage: 8,
+                    maxDamage: 15
+                });
+            }
+
+             die() {
+                super.die();
+                Game.logMessage("Your mecha has been destroyed. GAME OVER.");
+                Game.endGame();
+            }
+        }
+
+        class Enemy extends Entity {
+             constructor(x, y) {
+                super(x, y, 'd', 'enemy', 'Scout Drone', {
+                    hull: 30,
+                    maxHull: 30,
+                    piloting: 3,
+                    // CHANGED: Reduced damage for level 1 enemies to be more balanced.
+                    minDamage: 2,
+                    maxDamage: 5
+                });
+            }
+
+            act() {
+                if(this.stats.hull <= 0) return;
+
+                const dx = Game.player.x - this.x;
+                const dy = Game.player.y - this.y;
+
+                if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) {
+                    this.attack(Game.player);
+                    return;
+                }
+
+                let newX = this.x;
+                let newY = this.y;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    newX += Math.sign(dx);
+                } else {
+                    newY += Math.sign(dy);
+                }
+                
+                if (!Game.isOccupied(newX, newY)) {
+                    this.x = newX;
+                    this.y = newY;
+                }
+            }
+        }
+
+        // --- GAME ENGINE ---
+
+        const Game = {
+            display: null,
+            ui: {},
+            map: {},
+            player: null,
+            enemies: [],
+            level: 1,
+            playerTurn: true,
+            isFleeMode: false, // NEW: State to track if player is trying to flee
+
+            init: function() {
+                this.display = document.getElementById('game-container');
+                this.ui.level = document.getElementById('ui-level');
+                this.ui.pos = document.getElementById('ui-pos');
+                this.ui.hull = document.getElementById('ui-hull');
+                this.ui.gun = document.getElementById('ui-gun');
+                this.ui.pil = document.getElementById('ui-pil');
+                this.ui.log = document.getElementById('message-log');
+                
+                this.generateLevel();
+                this.inputHandler = this.handleInput.bind(this);
+                window.addEventListener('keydown', this.inputHandler);
+                this.logMessage("Welcome, Pilot. Systems online.");
+                this.logMessage("Move with arrows. Bump enemies to attack. Press 'f' to flee.");
+                this.draw();
+            },
+            
+            endGame: function() {
+                window.removeEventListener('keydown', this.inputHandler);
+            },
+
+            generateLevel: function() {
+                const width = 15 + Math.floor(this.level * 1.5);
+                const height = 10 + this.level;
+                this.map = { width: width, height: height, tiles: {} };
+                
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        this.map.tiles[`${x},${y}`] = TILES.WALL;
+                    }
+                }
+
+                const floorTiles = [];
+                let currentX = Math.floor(width / 2);
+                let currentY = Math.floor(height / 2);
+                const totalTiles = width * height;
+                const desiredFloors = totalTiles * 0.45;
+                
+                while (floorTiles.length < desiredFloors) {
+                    if (this.map.tiles[`${currentX},${currentY}`].solid) {
+                        this.map.tiles[`${currentX},${currentY}`] = TILES.FLOOR;
+                        floorTiles.push({x: currentX, y: currentY});
+                    }
+                    const direction = Math.floor(Math.random() * 4);
+                    if (direction === 0 && currentX > 1) currentX--;
+                    else if (direction === 1 && currentX < width - 2) currentX++;
+                    else if (direction === 2 && currentY > 1) currentY--;
+                    else if (direction === 3 && currentY < height - 2) currentY++;
+                }
+
+                const playerStart = floorTiles.shift();
+                if (!this.player) {
+                    this.player = new Player(playerStart.x, playerStart.y);
+                } else {
+                    this.player.x = playerStart.x;
+                    this.player.y = playerStart.y;
+                }
+
+                const stairsPos = floorTiles.pop();
+                this.map.tiles[`${stairsPos.x},${stairsPos.y}`] = TILES.STAIRS;
+                
+                this.enemies = [];
+                const numEnemies = 2 + this.level;
+                for(let i=0; i < numEnemies && floorTiles.length > 0; i++) {
+                    const pos = floorTiles.splice(Math.floor(Math.random() * floorTiles.length), 1)[0];
+                    this.enemies.push(new Enemy(pos.x, pos.y));
+                }
+                
+                const numChests = 1 + Math.floor(Math.random() * 3);
+                 for(let i=0; i < numChests && floorTiles.length > 0; i++) {
+                    const pos = floorTiles.splice(Math.floor(Math.random() * floorTiles.length), 1)[0];
+                    this.map.tiles[`${pos.x},${pos.y}`] = TILES.CHEST;
+                }
+            },
+            
+            logMessage: function(message) {
+                const messageElement = document.createElement('div');
+                messageElement.textContent = `> ${message}`;
+                this.ui.log.prepend(messageElement);
+            },
+            
+            isOccupied: function(x, y) {
+                if (this.player.x === x && this.player.y === y) return true;
+                for (const enemy of this.enemies) {
+                    if (enemy.x === x && enemy.y === y && enemy.stats.hull > 0) return enemy;
+                }
+                return false;
+            },
+
+            draw: function() {
+                let mapString = '';
+                const { width, height, tiles } = this.map;
+
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        if (this.player.x === x && this.player.y === y) {
+                            mapString += `<span class="${this.player.color}">${this.player.char}</span>`;
+                        } else {
+                            const entity = this.isOccupied(x, y);
+                            if (entity) {
+                                mapString += `<span class="${entity.color}">${entity.char}</span>`;
+                            } else {
+                                const deadEnemy = this.enemies.find(e => e.x === x && e.y === y && e.stats.hull <= 0);
+                                if (deadEnemy) {
+                                    mapString += `<span class="${deadEnemy.color}">${deadEnemy.char}</span>`;
+                                } else {
+                                    const tile = tiles[`${x},${y}`];
+                                    mapString += `<span class="${tile.color}">${tile.char}</span>`;
+                                }
+                            }
+                        }
+                    }
+                    mapString += '\n';
+                }
+                this.display.innerHTML = mapString;
+                
+                const p = this.player;
+                this.ui.level.textContent = this.level;
+                this.ui.pos.textContent = `${p.x}, ${p.y}`;
+                this.ui.hull.textContent = `${p.stats.hull}/${p.stats.maxHull}`;
+                this.ui.gun.textContent = p.stats.gunnery;
+                this.ui.pil.textContent = p.stats.piloting;
+            },
+
+            // CHANGED: The entire input handler has been refactored for the new flee mechanic.
+            handleInput: function(event) {
+                if (!this.playerTurn) return;
+
+                // Handle non-movement keys first
+                if (event.key === 'f') {
+                    this.isFleeMode = true;
+                    this.logMessage("FLEE MODE: Select a direction to escape.");
+                    return; // Wait for the next input (an arrow key)
+                }
+
+                let dx = 0;
+                let dy = 0;
+                if (event.key === 'ArrowUp') dy = -1;
+                if (event.key === 'ArrowDown') dy = 1;
+                if (event.key === 'ArrowLeft') dx = -1;
+                if (event.key === 'ArrowRight') dx = 1;
+
+                // If an arrow key was pressed
+                if (dx !== 0 || dy !== 0) {
+                    this.playerTurn = false; // Player action is committed
+
+                    if (this.isFleeMode) {
+                        this.attemptFlee(dx, dy);
+                    } else {
+                        this.attemptMoveOrAttack(dx, dy);
+                    }
+                    
+                    // The action is done, so exit flee mode
+                    this.isFleeMode = false;
+
+                    // Enemy turn proceeds after a delay
+                    setTimeout(() => {
+                        if (this.player.stats.hull > 0) {
+                           this.enemies.forEach(e => e.act());
+                        }
+                        this.draw();
+                        this.playerTurn = true;
+                    }, 100);
+                }
+            },
+
+            // NEW: Logic for moving or attacking is now in its own function.
+            attemptMoveOrAttack: function(dx, dy) {
+                const newX = this.player.x + dx;
+                const newY = this.player.y + dy;
+                const targetTile = this.map.tiles[`${newX},${newY}`];
+
+                const targetEnemy = this.isOccupied(newX, newY);
+                if (targetEnemy) {
+                    this.player.attack(targetEnemy);
+                } else if (targetTile.solid) {
+                    if (targetTile === TILES.CHEST) {
+                        this.logMessage("You pry open a supply chest.");
+                        const healing = 25;
+                        this.player.stats.hull = Math.min(this.player.stats.maxHull, this.player.stats.hull + healing);
+                        this.logMessage(`Hull repaired by ${healing} points!`);
+                        this.map.tiles[`${newX},${newY}`] = TILES.FLOOR;
+                    } else {
+                        this.logMessage("CLANG! You hit a wall.");
+                    }
+                } else {
+                    // Normal move to an empty square
+                    this.player.x = newX;
+                    this.player.y = newY;
+                    if (this.map.tiles[`${this.player.x},${this.player.y}`] === TILES.STAIRS) {
+                        this.level++;
+                        this.logMessage(`Descending to level ${this.level}...`);
+                        this.generateLevel();
+                    }
+                }
+            },
+            
+            // NEW: Logic for fleeing is now in its own function.
+            attemptFlee: function(dx, dy) {
+                const newX = this.player.x + dx;
+                const newY = this.player.y + dy;
+                const targetTile = this.map.tiles[`${newX},${newY}`];
+
+                // Can't flee into a wall or another enemy
+                if (targetTile.solid || this.isOccupied(newX, newY)) {
+                    this.logMessage("Cannot flee in that direction!");
+                    return; // This doesn't consume the turn, player can try another direction
+                }
+                
+                // Find an adjacent enemy to check against
+                let adjacentEnemy = null;
+                for (const enemy of this.enemies) {
+                    if (enemy.stats.hull > 0 && Math.abs(enemy.x - this.player.x) <= 1 && Math.abs(enemy.y - this.player.y) <= 1) {
+                        adjacentEnemy = enemy;
+                        break;
+                    }
+                }
+                
+                // If no enemy is nearby, fleeing is just a normal move.
+                if (!adjacentEnemy) {
+                    this.logMessage("You move cautiously.");
+                    this.player.x = newX;
+                    this.player.y = newY;
+                    return;
+                }
+
+                // Perform the Flee Check
+                const fleeChance = 50 + this.player.stats.piloting - adjacentEnemy.stats.piloting;
+                if (Math.random() * 100 < fleeChance) {
+                    this.logMessage(`Success! You evaded the ${adjacentEnemy.name}!`);
+                    this.player.x = newX;
+                    this.player.y = newY;
+                } else {
+                    this.logMessage(`Your escape was blocked by the ${adjacentEnemy.name}! It gets a free attack!`);
+                    adjacentEnemy.attack(this.player);
+                }
+            }
+        };
+
+        // --- START THE GAME ---
+        Game.init();
+    </script>
+</body>
+</html>
