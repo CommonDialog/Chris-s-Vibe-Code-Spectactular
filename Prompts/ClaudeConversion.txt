@@ -1,0 +1,50 @@
+When converting one file to another, use these steps:
+
+# Before converting, create a checklist:
+- Goal type icons (Money, Weight, Exercise, Travel)
+- Checkbox grids for weekly steps ≤10 targets
+- +/- buttons with input fields for numeric steps
+- Rich add-step form with type selection
+- Sophisticated progress bars for each step
+- etc...
+
+// Instead of rewriting, extract exact sections:
+// 1. Find the original function/component
+// 2. Copy it exactly
+// 3. Only change imports and prop passing
+// 4. Test each feature works identically
+
+// WRONG: "Let me simplify this complex logic"
+const calculateProgress = () => {
+  // Basic calculation
+}
+
+// RIGHT: "Let me preserve this complex logic exactly"
+const calculateOverallProgress = () => {
+  // Exact copy of original complex calculation
+  if (!goal.steps || goal.steps.length === 0) {
+    // Fallback to original goal progress if no steps
+    if (goal.type === 'temperature') {
+      return (goal.current / goal.target) * 100;
+    }
+    // ... exact original logic
+  }
+}
+
+# After conversion, verify:
+1. Every button in original exists in new version
+2. Every interaction works identically  
+3. Every visual element is preserved
+4. Every piece of state is maintained
+5. All edge cases handle the same way
+
+// Instead of:
+// 1. Create new simple component
+// 2. Add basic features
+// 3. Try to remember what was missing
+
+// Do:
+// 1. Copy exact original component code
+// 2. Extract to new file with minimal changes
+// 3. Update only imports and prop drilling
+// 4. Test feature-by-feature against original
