@@ -1,3 +1,5 @@
+I would like you to convert Original.js to a well formatted React project.  Please perserve the functionality exactly.
+
 When converting one file to another, use these steps:
 
 # Before converting, create a checklist:
